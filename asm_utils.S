@@ -1,8 +1,7 @@
 #include <avr/io.h>
 #include <avr/interrupt.h>
 
-/* Register storage for r0-r31 + SREG */
-uint8_t register_snapshot[33];
+
 
 .section .text
 

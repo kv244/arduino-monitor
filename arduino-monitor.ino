@@ -8,6 +8,9 @@ void capture_registers(uint8_t *buffer);
 void restore_and_execute(uint16_t address, uint8_t *buffer);
 }
 
+extern char _etext;
+extern char __data_load_start;
+
 uint8_t reg_file[33]; // r0-r31 + SREG
 
 void printHex8(uint8_t val) {
