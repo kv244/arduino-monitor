@@ -1,24 +1,19 @@
 #include <avr/io.h>
 #include <avr/interrupt.h>
 
-
-
 .section .text
 
-/* 
+/*
  * void capture_registers(uint8_t *buffer)
- * Captures r0-r31 and SREG into the provided buffer.
+ * Captures r0–r31 and SREG into the provided buffer.
  * buffer must be at least 33 bytes.
  * r24:r25 contains the address of the buffer.
  */
 .global capture_registers
 capture_registers:
-    push r30
-    push r31
-    
-    movw r30, r24    ; Z = buffer address
-    
-    ; Save r0 - r31
+    movw r30, r24        ; Z = buffer address
+
+    ; Save r0–r29
     st Z+, r0
     st Z+, r1
     st Z+, r2
@@ -49,89 +44,75 @@ capture_registers:
     st Z+, r27
     st Z+, r28
     st Z+, r29
-    
-    ; Pop saved R30/R31 and store them
-    pop r0 ; Temp restore R31
-    pop r1 ; Temp restore R30
-    st Z+, r1 ; Store R30
-    st Z+, r0 ; Store R31
-    
-    ; Store SREG
+
+    ; Save r30 and r31
+    mov r0, r30
+    mov r1, r31
+    st Z+, r0
+    st Z+, r1
+
+    ; Save SREG
     in r0, _SFR_IO_ADDR(SREG)
     st Z+, r0
-    
+
     ret
 
 /*
- * void call_address(uint16_t address)
- * Performs an indirect call to the provided flash address.
- * r24:r25 contains the address.
- */
-/*
  * void restore_and_execute(uint16_t target, uint8_t *buffer)
- * Restores r0-r31 and SREG from buffer, then jumps to target.
+ * Restores r0–r31 and SREG from buffer, then jumps to target.
  * r24:r25 = target address (word)
  * r22:r23 = buffer address
  */
 .global restore_and_execute
 restore_and_execute:
-    movw r30, r22    ; Z = buffer address
+    movw r30, r22        ; Z = buffer address
+
+    ; Push target address onto stack (low then high)
+    push r24             ; PCL
+    push r25             ; PCH
+
+    movw r30, r22        ; Z = buffer address
+
+    ; Restore r0–r29 using Z (fixed displacement)
+    ldd r0, Z+0
+    ldd r1, Z+1
+    ldd r2, Z+2
+    ldd r3, Z+3
+    ldd r4, Z+4
+    ldd r5, Z+5
+    ldd r6, Z+6
+    ldd r7, Z+7
+    ldd r8, Z+8
+    ldd r9, Z+9
+    ldd r10, Z+10
+    ldd r11, Z+11
+    ldd r12, Z+12
+    ldd r13, Z+13
+    ldd r14, Z+14
+    ldd r15, Z+15
+    ldd r16, Z+16
+    ldd r17, Z+17
+    ldd r18, Z+18
+    ldd r19, Z+19
+    ldd r20, Z+20
+    ldd r21, Z+21
+    ldd r22, Z+22
+    ldd r23, Z+23
+    ldd r24, Z+24
+    ldd r25, Z+25
+    ldd r26, Z+26
+    ldd r27, Z+27
+    ldd r28, Z+28
+    ldd r29, Z+29
     
-    ; We can't use Z to jump after we restore r30/31.
-    ; Solution: Push target address onto stack and use 'ret' to jump.
-    push r24 ; Target Low
-    push r25 ; Target High (Note: AVR stack is big-endian for return addresses? No, PC is stored differently)
-    ; Actually, for AVR, the stack stores the return address (PC) in high-low or low-high depending on the model.
-    ; On ATmega328P, PC is 16-bit. Stack stores PCL (low), PCH (high).
-    ; So we push PCH then PCL? No, the instruction 'ret' pops PCH then PCL.
-    ; Wait, 'ret' pops PC_High then PC_Low. So we push PC_Low then PC_High.
-    
-    ; Clean up the stack strategy:
-    pop r25 ; PC High
-    pop r24 ; PC Low (We basically just swapped them to prepare for 'ret')
-    push r24 ; PCL
-    push r25 ; PCH
-    
-    ; Now address is on stack.
-    
-    ; Restore SREG (r0 as temp)
+    ; Restore SREG (use r0 as temp, it's already restored but we can redo it)
     ldd r0, Z+32
     out _SFR_IO_ADDR(SREG), r0
+    ; Restore r0 one last time
+    ldd r0, Z+0
     
-    ; Restore r0-r29
-    ld r0, Z+
-    ld r1, Z+
-    ld r2, Z+
-    ld r3, Z+
-    ld r4, Z+
-    ld r5, Z+
-    ld r6, Z+
-    ld r7, Z+
-    ld r8, Z+
-    ld r9, Z+
-    ld r10, Z+
-    ld r11, Z+
-    ld r12, Z+
-    ld r13, Z+
-    ld r14, Z+
-    ld r15, Z+
-    ld r16, Z+
-    ld r17, Z+
-    ld r18, Z+
-    ld r19, Z+
-    ld r20, Z+
-    ld r21, Z+
-    ld r22, Z+
-    ld r23, Z+
-    ld r24, Z+
-    ld r25, Z+
-    ld r26, Z+
-    ld r27, Z+
-    ld r28, Z+
-    ld r29, Z+
-    
-    ; Finally restore Z (r30/31)
-    ldd r30, Z+0
-    ldd r31, Z+1
-    
-    ret ; Jumps to the address we pushed earlier
+    ; Finally restore Z (r30 and r31)
+    ldd r31, Z+31
+    ldd r30, Z+30
+
+    ret                  ; Pops target address and jumps
