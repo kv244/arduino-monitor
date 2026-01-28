@@ -141,6 +141,36 @@ void loop() {
     break;
   }
 
+  case '6': {
+    Serial.print(F("Flash Address (Hex): "));
+    uint16_t addr = readHexInput();
+    Serial.print(F("Length (Dec): "));
+    uint16_t len = Serial.parseInt();
+
+    Serial.println(F("--- FLASH DUMP ---"));
+    for (uint16_t i = 0; i < len; i++) {
+      uint16_t currentAddr = addr + i;
+
+      // Add 1K Separator
+      if (i > 0 && (currentAddr % 1024 == 0)) {
+        Serial.println(F("\n[ --- 1K BLOCK BOUNDARY --- ]"));
+      }
+
+      if (i % 16 == 0) {
+        if (i > 0)
+          Serial.println();
+        printHex16(currentAddr);
+        Serial.print(F(": "));
+      }
+
+      uint8_t val = pgm_read_byte(currentAddr);
+      printHex8(val);
+      Serial.print(F(" "));
+    }
+    Serial.println(F("\n--- END DUMP ---"));
+    break;
+  }
+
   default:
     Serial.println(F("Unknown command"));
     break;
