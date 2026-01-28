@@ -68,8 +68,71 @@ capture_registers:
  * Performs an indirect call to the provided flash address.
  * r24:r25 contains the address.
  */
-.global execute_at_address
-execute_at_address:
-    movw r30, r24
-    icall
-    ret
+/*
+ * void restore_and_execute(uint16_t target, uint8_t *buffer)
+ * Restores r0-r31 and SREG from buffer, then jumps to target.
+ * r24:r25 = target address (word)
+ * r22:r23 = buffer address
+ */
+.global restore_and_execute
+restore_and_execute:
+    movw r30, r22    ; Z = buffer address
+    
+    ; We can't use Z to jump after we restore r30/31.
+    ; Solution: Push target address onto stack and use 'ret' to jump.
+    push r24 ; Target Low
+    push r25 ; Target High (Note: AVR stack is big-endian for return addresses? No, PC is stored differently)
+    ; Actually, for AVR, the stack stores the return address (PC) in high-low or low-high depending on the model.
+    ; On ATmega328P, PC is 16-bit. Stack stores PCL (low), PCH (high).
+    ; So we push PCH then PCL? No, the instruction 'ret' pops PCH then PCL.
+    ; Wait, 'ret' pops PC_High then PC_Low. So we push PC_Low then PC_High.
+    
+    ; Clean up the stack strategy:
+    pop r25 ; PC High
+    pop r24 ; PC Low (We basically just swapped them to prepare for 'ret')
+    push r24 ; PCL
+    push r25 ; PCH
+    
+    ; Now address is on stack.
+    
+    ; Restore SREG (r0 as temp)
+    ldd r0, Z+32
+    out _SFR_IO_ADDR(SREG), r0
+    
+    ; Restore r0-r29
+    ld r0, Z+
+    ld r1, Z+
+    ld r2, Z+
+    ld r3, Z+
+    ld r4, Z+
+    ld r5, Z+
+    ld r6, Z+
+    ld r7, Z+
+    ld r8, Z+
+    ld r9, Z+
+    ld r10, Z+
+    ld r11, Z+
+    ld r12, Z+
+    ld r13, Z+
+    ld r14, Z+
+    ld r15, Z+
+    ld r16, Z+
+    ld r17, Z+
+    ld r18, Z+
+    ld r19, Z+
+    ld r20, Z+
+    ld r21, Z+
+    ld r22, Z+
+    ld r23, Z+
+    ld r24, Z+
+    ld r25, Z+
+    ld r26, Z+
+    ld r27, Z+
+    ld r28, Z+
+    ld r29, Z+
+    
+    ; Finally restore Z (r30/31)
+    ld r30, Z+
+    ld r31, Z+
+    
+    ret ; Jumps to the address we pushed earlier

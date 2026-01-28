@@ -5,7 +5,7 @@
 
 extern "C" {
 void capture_registers(uint8_t *buffer);
-void execute_at_address(uint16_t address);
+void restore_and_execute(uint16_t address, uint8_t *buffer);
 }
 
 uint8_t reg_file[33]; // r0-r31 + SREG
@@ -133,9 +133,9 @@ void loop() {
   case '5': {
     Serial.print(F("Flash Word Address (Hex): "));
     uint16_t addr = readHexInput();
-    Serial.println(F("Calling..."));
+    Serial.println(F("Restoring registers and jumping..."));
     delay(100);
-    execute_at_address(addr);
+    restore_and_execute(addr, reg_file);
     Serial.println(F("Returned."));
     break;
   }
