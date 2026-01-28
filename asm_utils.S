@@ -131,7 +131,7 @@ restore_and_execute:
     ld r29, Z+
     
     ; Finally restore Z (r30/31)
-    ld r30, Z+
-    ld r31, Z+
+    ldd r30, Z+0
+    ldd r31, Z+1
     
     ret ; Jumps to the address we pushed earlier
