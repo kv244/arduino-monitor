@@ -28,6 +28,7 @@ void displayMenu() {
   Serial.println(F("3. Read Memory (RAM)"));
   Serial.println(F("4. Write Memory (RAM)"));
   Serial.println(F("5. Call Flash Address"));
+  Serial.println(F("6. Read Flash Memory (Dump)"));
   Serial.print(F("Choice> "));
 }
 
