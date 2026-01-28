@@ -102,6 +102,6 @@ restore_and_execute:
     ldd r31, Z+31
     ldd r30, Z+30
 
-    ; Note: r1 is restored from buffer. If buffer was captured by us, it's 0.
-    ; If buffer was modified by user, we trust them.
+    ; Clear r1 (the zero register) as per AVR GCC ABI
+    eor r1, r1
     ret

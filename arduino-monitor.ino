@@ -1,6 +1,8 @@
 /**
  * Arduino UNO Monitor
  * Low-level register and memory inspector.
+ * Make sure you set baud rate in Serial Monitor to 115200
+ * rjp Jan 28 2026
  */
 
 extern "C" {
@@ -25,42 +27,39 @@ void printHex16(uint16_t val) {
   printHex8(val & 0xFF);
 }
 
-uint16_t readHexInput() {
-  String input = "";
+uint16_t readInputLine(char *buffer, uint8_t maxLen, bool isHex) {
+  uint8_t pos = 0;
   while (true) {
     if (Serial.available()) {
       char c = Serial.read();
       if (c == '\n' || c == '\r') {
-        if (input.length() > 0)
-          break;
-        else
-          continue;
+        if (pos > 0) {
+          buffer[pos] = '\0';
+          Serial.println();
+          return (uint16_t)strtol(buffer, NULL, isHex ? 16 : 10);
+        }
+        continue;
+      } else if (c == 0x08 || c == 0x7F) { // Backspace or Del
+        if (pos > 0) {
+          pos--;
+          Serial.print(F("\b \b"));
+        }
+      } else if (pos < maxLen - 1) {
+        buffer[pos++] = c;
+        Serial.print(c);
       }
-      input += c;
-      Serial.print(c);
     }
   }
-  Serial.println();
-  return (uint16_t)strtol(input.c_str(), NULL, 16);
+}
+
+uint16_t readHexInput() {
+  char buf[10];
+  return readInputLine(buf, sizeof(buf), true);
 }
 
 uint16_t readDecInput() {
-  String input = "";
-  while (true) {
-    if (Serial.available()) {
-      char c = Serial.read();
-      if (c == '\n' || c == '\r') {
-        if (input.length() > 0)
-          break;
-        else
-          continue;
-      }
-      input += c;
-      Serial.print(c);
-    }
-  }
-  Serial.println();
-  return (uint16_t)strtol(input.c_str(), NULL, 10);
+  char buf[10];
+  return readInputLine(buf, sizeof(buf), false);
 }
 
 void displayMenu() {
@@ -157,8 +156,24 @@ void loop() {
     uint16_t addr = readHexInput();
     Serial.print(F("Value (Hex): "));
     uint8_t val = (uint8_t)readHexInput();
+
+    Serial.print(F("Writing "));
+    printHex8(val);
+    Serial.print(F(" to 0x"));
+    printHex16(addr);
+    Serial.print(F("... "));
+
     *(volatile uint8_t *)addr = val;
-    Serial.println(F("Done."));
+
+    // Immediate readback verification
+    uint8_t readback = *(volatile uint8_t *)addr;
+    if (readback == val) {
+      Serial.println(F("Verified."));
+    } else {
+      Serial.print(F("FAILED (Readback: 0x"));
+      printHex8(readback);
+      Serial.println(F(")"));
+    }
     break;
   }
 
@@ -199,7 +214,11 @@ void loop() {
   }
 
   case '7': {
-    Serial.println(F("\n--- PROGRAM ADDRESS INFO ---"));
+    Serial.println(F("\n--- PROGRAM/MEMORY ADDRESS INFO ---"));
+    Serial.print(F("SRAM Start:                   0x0100\n"));
+    Serial.print(F("reg_file pointer:             0x"));
+    printHex16((uint16_t)reg_file);
+    Serial.println();
     Serial.print(F("Flash Start (__text_start):  0x0000\n"));
     Serial.print(F("Code End (_etext):           0x"));
     printHex16((uint16_t)&_etext);
