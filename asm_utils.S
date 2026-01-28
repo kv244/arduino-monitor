@@ -1,67 +1,58 @@
 #include <avr/io.h>
-#include <avr/interrupt.h>
 
 .section .text
 
-/*
+/**
  * void capture_registers(uint8_t *buffer)
- * Captures r0–r31 and SREG into the provided buffer.
- * buffer must be at least 33 bytes.
- * r24:r25 contains the address of the buffer.
+ * r24:r25 = buffer
  */
 .global capture_registers
 capture_registers:
     movw r30, r24        ; Z = buffer address
-
-    ; Save r0–r29
-    st Z+, r0
-    st Z+, r1
-    st Z+, r2
-    st Z+, r3
-    st Z+, r4
-    st Z+, r5
-    st Z+, r6
-    st Z+, r7
-    st Z+, r8
-    st Z+, r9
-    st Z+, r10
-    st Z+, r11
-    st Z+, r12
-    st Z+, r13
-    st Z+, r14
-    st Z+, r15
-    st Z+, r16
-    st Z+, r17
-    st Z+, r18
-    st Z+, r19
-    st Z+, r20
-    st Z+, r21
-    st Z+, r22
-    st Z+, r23
-    st Z+, r24
-    st Z+, r25
-    st Z+, r26
-    st Z+, r27
-    st Z+, r28
-    st Z+, r29
-
-    ; Save r30 and r31
-    mov r0, r30
-    mov r1, r31
-    st Z+, r0
-    st Z+, r1
-
-    ; Save SREG
+    
+    std Z+0, r0
+    std Z+1, r1
+    std Z+2, r2
+    std Z+3, r3
+    std Z+4, r4
+    std Z+5, r5
+    std Z+6, r6
+    std Z+7, r7
+    std Z+8, r8
+    std Z+9, r9
+    std Z+10, r10
+    std Z+11, r11
+    std Z+12, r12
+    std Z+13, r13
+    std Z+14, r14
+    std Z+15, r15
+    std Z+16, r16
+    std Z+17, r17
+    std Z+18, r18
+    std Z+19, r19
+    std Z+20, r20
+    std Z+21, r21
+    std Z+22, r22
+    std Z+23, r23
+    std Z+24, r24
+    std Z+25, r25
+    std Z+26, r26
+    std Z+27, r27
+    std Z+28, r28
+    std Z+29, r29
+    std Z+30, r30
+    std Z+31, r31
+    
     in r0, _SFR_IO_ADDR(SREG)
-    st Z+, r0
+    std Z+32, r0
 
+    eor r1, r1           ; Restore zero register
     ret
 
-/*
+/**
  * void restore_and_execute(uint16_t target, uint8_t *buffer)
- * Restores r0–r31 and SREG from buffer, then jumps to target.
- * r24:r25 = target address (word)
- * r22:r23 = buffer address
+ * r24:r25 = target
+ * r22:r23 = buffer
  */
 .global restore_and_execute
 restore_and_execute:
@@ -71,9 +62,11 @@ restore_and_execute:
     push r24             ; PCL
     push r25             ; PCH
 
-    movw r30, r22        ; Z = buffer address
+    ; Restore SREG
+    ldd r0, Z+32
+    out _SFR_IO_ADDR(SREG), r0
 
-    ; Restore r0–r29 using Z (fixed displacement)
+    ; Restore all registers r0-r29
     ldd r0, Z+0
     ldd r1, Z+1
     ldd r2, Z+2
@@ -104,15 +97,11 @@ restore_and_execute:
     ldd r27, Z+27
     ldd r28, Z+28
     ldd r29, Z+29
-    
-    ; Restore SREG (use r0 as temp, it's already restored but we can redo it)
-    ldd r0, Z+32
-    out _SFR_IO_ADDR(SREG), r0
-    ; Restore r0 one last time
-    ldd r0, Z+0
-    
-    ; Finally restore Z (r30 and r31)
+
+    ; Finally restore Z
     ldd r31, Z+31
     ldd r30, Z+30
 
-    ret                  ; Pops target address and jumps
+    ; Note: r1 is restored from buffer. If buffer was captured by us, it's 0.
+    ; If buffer was modified by user, we trust them.
+    ret
