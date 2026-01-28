@@ -4,14 +4,15 @@
  */
 
 extern "C" {
-  void capture_registers(uint8_t *buffer);
-  void execute_at_address(uint16_t address);
+void capture_registers(uint8_t *buffer);
+void execute_at_address(uint16_t address);
 }
 
 uint8_t reg_file[33]; // r0-r31 + SREG
 
 void printHex8(uint8_t val) {
-  if (val < 16) Serial.print('0');
+  if (val < 16)
+    Serial.print('0');
   Serial.print(val, HEX);
 }
 
@@ -36,105 +37,111 @@ uint16_t readHexInput() {
     if (Serial.available()) {
       char c = Serial.read();
       if (c == '\n' || c == '\r') {
-        if (input.length() > 0) break;
-        else continue;
+        if (input.length() > 0)
+          break;
+        else
+          continue;
       }
       input += c;
       Serial.print(c);
     }
   }
   Serial.println();
-  return (uint16_t) strtol(input.c_str(), NULL, 16);
+  return (uint16_t)strtol(input.c_str(), NULL, 16);
 }
 
 void setup() {
   Serial.begin(9600);
-  while (!Serial);
+  while (!Serial)
+    ;
   Serial.println(F("Monitor Ready."));
 }
 
 void loop() {
   displayMenu();
-  while (!Serial.available());
+  while (!Serial.available())
+    ;
   char choice = Serial.read();
   Serial.println(choice);
 
   switch (choice) {
-    case '1': {
-      capture_registers(reg_file);
-      Serial.println(F("Register Snapshot:"));
-      for (int i = 0; i < 32; i++) {
-        Serial.print(F("r"));
-        Serial.print(i);
+  case '1': {
+    capture_registers(reg_file);
+    Serial.println(F("Register Snapshot:"));
+    for (int i = 0; i < 32; i++) {
+      Serial.print(F("r"));
+      Serial.print(i);
+      Serial.print(F(": "));
+      printHex8(reg_file[i]);
+      if ((i + 1) % 4 == 0)
+        Serial.println();
+      else
+        Serial.print(F("\t"));
+    }
+    Serial.print(F("SREG: "));
+    printHex8(reg_file[32]);
+    Serial.println();
+    break;
+  }
+
+  case '2': {
+    Serial.print(F("Reg index (0-31): "));
+    uint8_t idx = Serial.parseInt();
+    if (idx > 31) {
+      Serial.println(F("Invalid index"));
+      break;
+    }
+    Serial.print(F("New Value (Hex): "));
+    uint8_t val = (uint8_t)readHexInput();
+    reg_file[idx] = val;
+    Serial.print(F("Updated r"));
+    Serial.print(idx);
+    Serial.println();
+    break;
+  }
+
+  case '3': {
+    Serial.print(F("Address (Hex): "));
+    uint16_t addr = readHexInput();
+    Serial.print(F("Length: "));
+    uint16_t len = Serial.parseInt();
+    volatile uint8_t *ptr = (volatile uint8_t *)addr;
+
+    for (uint16_t i = 0; i < len; i++) {
+      if (i % 16 == 0) {
+        Serial.println();
+        printHex16(addr + i);
         Serial.print(F(": "));
-        printHex8(reg_file[i]);
-        if ((i + 1) % 4 == 0) Serial.println();
-        else Serial.print(F("\t"));
       }
-      Serial.print(F("SREG: "));
-      printHex8(reg_file[32]);
-      Serial.println();
-      break;
+      printHex8(ptr[i]);
+      Serial.print(F(" "));
     }
+    Serial.println();
+    break;
+  }
 
-    case '2': {
-      Serial.print(F("Reg index (0-31): "));
-      uint8_t idx = Serial.parseInt();
-      if (idx > 31) {
-        Serial.println(F("Invalid index"));
-        break;
-      }
-      Serial.print(F("New Value (Hex): "));
-      uint8_t val = (uint8_t)readHexInput();
-      reg_file[idx] = val;
-      Serial.print(F("Updated r"));
-      Serial.print(idx);
-      Serial.println();
-      break;
-    }
+  case '4': {
+    Serial.print(F("Address (Hex): "));
+    uint16_t addr = readHexInput();
+    Serial.print(F("Value (Hex): "));
+    uint8_t val = (uint8_t)readHexInput();
+    *(volatile uint8_t *)addr = val;
+    Serial.println(F("Done."));
+    break;
+  }
 
-    case '3': {
-      Serial.print(F("Address (Hex): "));
-      uint16_t addr = readHexInput();
-      Serial.print(F("Length: "));
-      uint16_t len = Serial.parseInt();
-      volatile uint8_t *ptr = (volatile uint8_t *)addr;
-      
-      for (uint16_t i = 0; i < len; i++) {
-        if (i % 16 == 0) {
-          Serial.println();
-          printHex16(addr + i);
-          Serial.print(F(": "));
-        }
-        printHex8(ptr[i]);
-        Serial.print(F(" "));
-      }
-      Serial.println();
-      break;
-    }
+  case '5': {
+    Serial.print(F("Flash Word Address (Hex): "));
+    uint16_t addr = readHexInput();
+    Serial.println(F("Calling..."));
+    delay(100);
+    execute_at_address(addr);
+    Serial.println(F("Returned."));
+    break;
+  }
 
-    case '4': {
-      Serial.print(F("Address (Hex): "));
-      uint16_t addr = readHexInput();
-      Serial.print(F("Value (Hex): "));
-      uint8_t val = (uint8_t)readHexInput();
-      *(volatile uint8_t *)addr = val;
-      Serial.println(F("Done."));
-      break;
-    }
-
-    case '5': {
-      Serial.print(F("Flash Word Address (Hex): "));
-      uint16_t addr = readHexInput();
-      Serial.println(F("Calling..."));
-      delay(100);
-      execute_at_address(addr);
-      Serial.println(F("Returned."));
-      break;
-    }
-
-    default:
-      Serial.println(F("Unknown command"));
-      break;
+  default:
+    Serial.println(F("Unknown command"));
+    break;
   }
 }
