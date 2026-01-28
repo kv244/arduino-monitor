@@ -29,6 +29,7 @@ void displayMenu() {
   Serial.println(F("4. Write Memory (RAM)"));
   Serial.println(F("5. Call Flash Address"));
   Serial.println(F("6. Read Flash Memory (Dump)"));
+  Serial.println(F("7. Display Program Address Info"));
   Serial.print(F("Choice> "));
 }
 
@@ -168,6 +169,30 @@ void loop() {
       Serial.print(F(" "));
     }
     Serial.println(F("\n--- END DUMP ---"));
+    break;
+  }
+
+  case '7': {
+    Serial.println(F("\n--- PROGRAM ADDRESS INFO ---"));
+    Serial.print(F("Flash Start (__text_start):  0x0000 (Physical start)\n"));
+
+    Serial.print(F("Code End (_etext):           0x"));
+    printHex16((uint16_t)&_etext);
+    Serial.println();
+
+    Serial.print(F("Data Load Start in Flash:    0x"));
+    printHex16((uint16_t)&__data_load_start);
+    Serial.println();
+
+    Serial.print(F("loop() function address:     0x"));
+    printHex16((uint16_t)loop);
+    Serial.println();
+
+    Serial.print(F("setup() function address:    0x"));
+    printHex16((uint16_t)setup);
+    Serial.println();
+
+    Serial.println(F("Note: Addresses are in Bytes."));
     break;
   }
 
