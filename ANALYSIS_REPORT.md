@@ -33,17 +33,24 @@ This is a well-improved version of what was likely a more basic monitor. It demo
 
 #### **Potential Improvements**
 
-*   **Blocking Input Loop:** The `readInputLine` function contains a `while (true)` loop that blocks forever until the user provides input.
-    *   **Risk:** If no data is sent over the serial port, the main loop will be stuck inside this function, unable to process any other logic or refresh the menu.
-    *   **Recommendation:** A non-blocking approach or a timeout would make the monitor more responsive. This could be achieved by using `millis()` to track time elapsed while waiting for input and returning if a timeout is reached.
+*   **Non-Blocking Input Handling (Critical)**:
+    *   **Current State:** The `readInputLine` function and the menu selection loop in `loop()` block indefinitely (`while (true)` or `while (!Serial.available())`) until input is received.
+    *   **Risk:** This makes the monitor unresponsive. If no data is sent, the Arduino effectively "freezes," unable to perform other tasks or update its state, leading to a poor user experience and potential issues in real-time applications where the monitor might be integrated.
+    *   **Detailed Recommendation:**
+        1.  **Introduce Timeout to `readInputLine`:** The `readInputLine` function already has `timeout_ms` and `INPUT_TIMEOUT_SENTINEL`. It needs to be fully implemented to return `INPUT_TIMEOUT_SENTINEL` if the `timeout_ms` expires without a complete line being entered. The `loop()` function also needs to react to this sentinel value.
+        2.  **Refactor Menu Input:** The `while (!Serial.available())` loop in `loop()` for menu selection should be replaced with a `millis()` based timeout similar to the proposed change for `readInputLine`. This allows the menu to refresh or other background tasks to run if no choice is made within a set period.
 
-*   **Error-Prone Register Indexing:** In `capture_registers` and `restore_and_execute`, the SREG is stored at `buffer[32]`.
-    *   **Risk:** This "magic number" is brittle. If the number of GPRs (General-Purpose Registers) were to change for a different AVR architecture, this code would break. While `32` is standard for this AVR, using a named constant would improve clarity and maintainability.
-    *   **Recommendation:** Define a constant like `SREG_BUFFER_INDEX 32` in `asm_utils_fixed.S` and use that constant.
+*   **Consistent Register Indexing (Maintainability & Robustness)**:
+    *   **Current State:** The `arduino-monitor-improved.ino` uses `SREG_BUFFER_INDEX` defined in `src/asm_defs.h`. The `asm_utils_fixed.S` file also defines `SREG_BUFFER_INDEX` independently using `.set SREG_BUFFER_INDEX, 32`.
+    *   **Risk:** While both files use a constant, having separate definitions introduces potential for inconsistencies if one is updated and the other is not. This can lead to subtle bugs that are hard to diagnose.
+    *   **Detailed Recommendation:**
+        1.  **Unify `SREG_BUFFER_INDEX`:** The goal is to have a single, canonical definition for `SREG_BUFFER_INDEX`.
+        2.  **Centralize Definition:** The most robust solution would be to generate a header file from the build process (if available) that can be included by both C++ and assembly. Alternatively, ensure the value in `asm_utils_fixed.S` is explicitly tied to the value in `src/asm_defs.h`, perhaps with a comment noting this dependency. Ideally, `asm_utils_fixed.S` would include `src/asm_defs.h` directly if the assembler supports C-style includes and `#define` directives.
 
-*   **Code Organization:** The main `.ino` file contains all the C++ logic.
-    *   **Recommendation:** For a project of this size, it's manageable. However, for further expansion, consider moving utility functions (e.g., `printHex8`, `readInputLine`, address validators) into a separate `.cpp`/`.h` file pair to improve modularity.
+*   **Code Organization (Future Scalability)**:
+    *   **Current State:** All C++ logic resides within the `arduino-monitor-improved.ino` file. For this project's current size, it's manageable and common in Arduino development.
+    *   **Recommendation:** For future expansion or if the project's complexity grows significantly, consider refactoring utility functions (e.g., `printHex8`, `readInputLine`, address validators, `displayMenu`) into separate `.cpp` and `.h` file pairs (e.g., `monitor_utils.cpp`, `monitor_utils.h`). This enhances modularity, improves readability, and makes code reuse easier.
 
 ### Summary
 
-The `arduino-monitor-improved` project is a robust and well-written low-level tool. It has clearly been hardened against many common bugs and includes important safety features. The main area for future improvement would be to refactor the blocking input handling to make the monitor more responsive. Overall, it's a solid utility for anyone doing bare-metal development on an Arduino.
+The `arduino-monitor-improved` project is a robust and well-written low-level tool. It has clearly been hardened against many common bugs and includes important safety features. The main areas for future improvement involve making the input handling fully non-blocking for better responsiveness and unifying constants for improved maintainability. Overall, it's a solid utility for anyone doing bare-metal development on an Arduino.
