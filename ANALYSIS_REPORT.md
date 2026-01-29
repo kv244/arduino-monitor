@@ -1,355 +1,49 @@
-# Arduino UNO Monitor - Code Analysis Report
-
-## CRITICAL ISSUES FOUND
-
-### 1. **Stack Corruption in `restore_and_execute` (SEVERE)**
-
-**Problem:**
-```asm
-push r24             ; PCL
-push r25             ; PCH
-; ... restore registers ...
-ret                  ; This pops wrong address!
-```
-
-The function pushes the target address onto the stack, then executes `ret`. However, when the function was called, a return address was already pushed. This causes:
-- The `ret` will jump to the target address ✓
-- But when the target returns, it pops the ORIGINAL caller's address
-- Stack becomes misaligned, causing unpredictable behavior
-
-**Fix:** Use `ijmp` (indirect jump) instead:
-```asm
-movw r30, r24        ; Put target in Z register
-ijmp                 ; Jump without affecting stack
-```
-
-### 2. **Register Capture Corrupts r24/r25 (MAJOR)**
-
-**Problem:**
-```asm
-capture_registers:
-    movw r30, r24        ; Z = buffer address (uses r24/r25)
-    std Z+24, r24        ; Saves corrupted r24!
-    std Z+25, r25        ; Saves corrupted r25!
-```
-
-The function receives the buffer address in r24/r25, then immediately uses them as a pointer. The saved values of r24/r25 will be the buffer address, not their actual pre-call values.
-
-**Fix:** Save r24/r25 to stack first:
-```asm
-push r24
-push r25
-movw r30, r24
-pop r25
-pop r24
-std Z+24, r24        ; Now saves correct value
-```
-
-### 3. **Word vs Byte Address Confusion (MAJOR)**
-
-**Problem:** 
-- Menu says "Flash Word Address"
-- But code treats input as byte address
-- AVR program counter uses word addressing (PC increments by 1 for each 2-byte instruction)
-- Function pointers in C are byte addresses
-
-**Impact:** If user enters word address 0x0100, the jump goes to byte address 0x0100 (word 0x0080), wrong location!
-
-**Fix:** Convert word to byte address:
-```asm
-lsl r24              ; Multiply by 2
-rol r25
-```
-
-### 4. **SREG Restoration Timing (MODERATE)**
-
-**Problem:**
-```asm
-ldd r0, Z+32
-out _SFR_IO_ADDR(SREG), r0    ; Enables interrupts early!
-; ... still restoring registers ...
-```
-
-If SREG has interrupts enabled (I-bit set), restoring it before other registers means an interrupt could fire while registers are in an inconsistent state.
-
-**Fix:** Restore SREG last, with `cli` at the start.
-
-### 5. **No Input Validation (MODERATE)**
-
-**Problems:**
-- No bounds checking on memory addresses
-- Can read/write I/O registers accidentally
-- Can overflow when addr + length > 0xFFFF
-- No validation that Flash addresses are within 32KB
-
-**Impact:** 
-- Writing to wrong I/O register could brick the Arduino
-- Reading beyond memory could cause undefined behavior
-- Flash reads beyond 0x7FFF return garbage
-
-## PERFORMANCE IMPROVEMENTS
-
-### 1. **Serial Output Buffering**
-
-**Current:** Many small Serial.print() calls
-```cpp
-Serial.print(F("r"));
-Serial.print(i);
-Serial.print(F(": "));
-printHex8(reg_file[i]);
-```
-
-**Problem:** Each call has overhead (buffer flush, interrupt handling)
-
-**Improvement:** Build string in RAM, send once:
-```cpp
-char buf[80];
-sprintf(buf, "r%02d: %02X\t", i, reg_file[i]);
-Serial.print(buf);
-```
-
-**Savings:** ~40% faster for register dumps
-
-### 2. **Hex Printing with Lookup Table**
-
-**Current:**
-```cpp
-Serial.print(val, HEX);  // Uses division/modulo internally
-```
-
-**Improved:**
-```cpp
-const char hexChars[] PROGMEM = "0123456789ABCDEF";
-Serial.write(pgm_read_byte(&hexChars[val >> 4]));
-Serial.write(pgm_read_byte(&hexChars[val & 0x0F]));
-```
-
-**Savings:** ~30% faster, smaller code
-
-### 3. **Flash Reading Optimization**
-
-**Current:** Byte-by-byte reads
-```cpp
-uint8_t val = pgm_read_byte(currentAddr);
-```
-
-**Improved:** Word-aligned reads
-```cpp
-if (addr & 1) {
-  // Handle odd start byte
-}
-for (; i < len-1; i += 2) {
-  uint16_t word = pgm_read_word(addr + i);
-  // Process both bytes
-}
-```
-
-**Savings:** ~50% faster for large dumps
-
-### 4. **Input Validation During Entry**
-
-**Current:** Accepts all characters, validates after
-**Improved:** Only accept valid hex/decimal digits during input
-- Reduces error handling
-- Better user experience
-- Shown in improved version
-
-## ASSEMBLY OPTIMIZATION OPPORTUNITIES
-
-### High-Value Targets for Assembly
-
-1. **Memory Copy Routines** (20-30% faster)
-```asm
-; Optimized memory dump
-.global asm_mem_dump
-asm_mem_dump:
-    ; Unroll loop for 16 bytes at a time
-    ld r0, Z+
-    ld r1, Z+
-    ; ... 14 more loads ...
-    ; Process all 16 bytes
-```
-
-2. **Hex to ASCII Conversion** (30-40% faster)
-```asm
-.global hex_to_ascii
-hex_to_ascii:
-    andi r24, 0x0F
-    cpi r24, 10
-    brlo .is_digit
-    subi r24, -('A' - 10)
-    ret
-.is_digit:
-    subi r24, -'0'
-    ret
-```
-
-3. **Fast Register Dumps** (50% faster)
-```asm
-; Write all 32 registers to Serial buffer directly
-; Skip C++ overhead
-```
-
-4. **Binary to Decimal Conversion** (40% faster)
-```asm
-; Fast division by 10 using multiplication
-; Uses reciprocal multiplication trick
-```
-
-### Medium-Value Targets
-
-5. **Memory Verification** (25% faster)
-- Write and verify in assembly
-- Use optimized compare loop
-
-6. **Checksum Calculation** (30% faster)
-- CRC or simple checksum
-- Useful for verifying dumps
-
-## ADDITIONAL ENHANCEMENTS
-
-### Safety Features
-
-1. **Watchdog Timer Integration**
-```cpp
-#include <avr/wdt.h>
-wdt_enable(WDTO_8S);  // Reset if hung
-```
-
-2. **Protected Memory Regions**
-```cpp
-const uint16_t PROTECTED[] PROGMEM = {
-  0x003D, 0x003E,  // SPL, SPH (stack pointer)
-  // Add other critical I/O registers
-};
-```
-
-3. **Undo Buffer**
-```cpp
-struct UndoEntry {
-  uint16_t addr;
-  uint8_t old_value;
-  uint8_t new_value;
-};
-```
-
-### Usability Features
-
-1. **Command History** (like shell)
-2. **Macro/Script Support** (run sequences)
-3. **Symbol Table** (show function names)
-4. **Disassembler** (decode Flash to instructions)
-
-### Advanced Features
-
-1. **Breakpoint Support**
-```cpp
-// Software breakpoints using modified Flash
-```
-
-2. **Memory Watch**
-```cpp
-// Alert when memory location changes
-```
-
-3. **Performance Counters**
-```cpp
-// Count cycles, measure timing
-```
-
-## CODE SIZE ANALYSIS
-
-From build_output.txt:
-- Flash: 6100 bytes (18% of 32KB)
-- RAM: 233 bytes (11% of 2KB)
-
-**Optimization potential:**
-- Moving strings to PROGMEM: Save ~100 bytes RAM
-- Assembly routines: Save ~500 bytes Flash
-- Lookup tables: Save ~200 bytes Flash
-
-**After optimizations:**
-- Flash: ~5400 bytes (16%)
-- RAM: ~130 bytes (6%)
-
-## TESTING RECOMMENDATIONS
-
-### Critical Tests
-
-1. **Stack Integrity**
-```cpp
-// Before and after restore_and_execute
-uint16_t sp_before = SP;
-restore_and_execute(...);
-uint16_t sp_after = SP;
-assert(sp_before == sp_after);
-```
-
-2. **Register Capture Accuracy**
-```cpp
-// Set known values in registers via inline asm
-// Capture and verify
-```
-
-3. **Boundary Conditions**
-- Address 0x0000
-- Address 0xFFFF
-- Length = 0
-- Length causes overflow
-
-### Security Tests
-
-1. **I/O Register Protection**
-- Attempt to write to SPL/SPH
-- Verify it's blocked or warned
-
-2. **Flash Write Protection**
-- Attempt to write to Flash
-- Should fail gracefully
-
-## SUMMARY
-
-### Must Fix (Critical)
-1. ✅ Stack corruption in restore_and_execute
-2. ✅ Register capture corruption
-3. ✅ Word/byte address handling
-4. ✅ Input validation
-
-### Should Fix (High Priority)
-1. ✅ SREG restoration timing
-2. ✅ Bounds checking
-3. ⚠️  Serial buffer optimization
-4. ⚠️  Flash read optimization
-
-### Nice to Have (Medium Priority)
-1. Assembly hex printing
-2. Lookup tables
-3. Memory verification routine
-4. Better error messages
-
-### Future Enhancements
-1. Disassembler
-2. Breakpoint support
-3. Symbol table
-4. Command history
-
-## FILES PROVIDED
-
-1. **asm_utils_fixed.S** - Corrected assembly with:
-   - Fixed stack handling (ijmp instead of ret trick)
-   - Fixed register capture (saves r24/r25 correctly)
-   - Word-to-byte address conversion
-   - Proper SREG restoration order
-   - Alternative restore_and_call that returns properly
-
-2. **arduino-monitor-improved.ino** - Enhanced C code with:
-   - Input validation for all operations
-   - Bounds checking
-   - I/O register warnings
-   - Better error messages
-   - SREG flag decoding
-   - Free memory display
-   - Word/byte address clarification
-   - Performance optimizations
-
-The improved code is production-ready and significantly safer than the original.
+Here is a statistical analysis and quality report for the `arduino-monitor-improved` codebase.
+
+### Lines of Code (LOC) Analysis
+
+This table provides a breakdown of lines of code, comments, and blank lines for each source file.
+
+| File                           | Language | Code | Comments | Blank | Total | Comment Ratio |
+|--------------------------------|----------|------|----------|-------|-------|---------------|
+| `arduino-monitor-improved.ino` | C++      | 251  | 25       | 35    | 311   | 8.0%          |
+| `asm_utils_fixed.S`            | Assembly | 99   | 21       | 15    | 135   | 15.6%         |
+| **Total**                      | -        | **350**| **46**       | **50**  | **446**   | **10.3%**       |
+
+*   **Comment Ratio:** The project is reasonably documented, with comments explaining the purpose of functions and noting specific improvements and fixes.
+
+### Code Coverage Analysis
+
+*   **Estimated Coverage: 0%**
+*   **Reasoning:** Similar to the `toyos` project, there is no automated testing framework in the repository. Testing for this type of application—a low-level hardware monitor—is almost exclusively done through interactive, on-target debugging and manual verification.
+*   **Recommendation:** While comprehensive unit testing is difficult, it would be possible to test the input parsing logic (`readInputLine`, `readHexInput`) on a host machine by extracting it into a standard C++ module. This would ensure the input validation is robust without needing the Arduino hardware.
+
+### Code Quality and Risk Analysis
+
+This is a well-improved version of what was likely a more basic monitor. It demonstrates a strong understanding of low-level AVR architecture and potential pitfalls.
+
+#### **Key Strengths**
+
+*   **Input Validation:** The `readInputLine` function includes essential checks for buffer length and character types (`isxdigit`, `isdigit`), preventing common buffer overflow and input errors.
+*   **Bounds Checking:** The code correctly validates memory addresses against known hardware limits (`SRAM_START`, `SRAM_END`, `FLASH_END`) before reading or writing. This is a critical safety feature that prevents the monitor from easily crashing the device.
+*   **User Warnings:** Before performing potentially dangerous operations like writing to I/O registers or jumping to an arbitrary address, the monitor requires explicit user confirmation. This is excellent practice for a tool of this nature.
+*   **Correct Assembly Practices:** The assembly code in `asm_utils_fixed.S` avoids common errors.
+    *   It correctly saves and restores argument registers (`r24`, `r25`) before using them as pointers.
+    *   It uses the `ijmp` and `icall` instructions for jumping to arbitrary code addresses, which is much safer than manipulating the return stack directly.
+
+#### **Potential Improvements**
+
+*   **Blocking Input Loop:** The `readInputLine` function contains a `while (true)` loop that blocks forever until the user provides input.
+    *   **Risk:** If no data is sent over the serial port, the main loop will be stuck inside this function, unable to process any other logic or refresh the menu.
+    *   **Recommendation:** A non-blocking approach or a timeout would make the monitor more responsive. This could be achieved by using `millis()` to track time elapsed while waiting for input and returning if a timeout is reached.
+
+*   **Error-Prone Register Indexing:** In `capture_registers` and `restore_and_execute`, the SREG is stored at `buffer[32]`.
+    *   **Risk:** This "magic number" is brittle. If the number of GPRs (General-Purpose Registers) were to change for a different AVR architecture, this code would break. While `32` is standard for this AVR, using a named constant would improve clarity and maintainability.
+    *   **Recommendation:** Define a constant like `SREG_BUFFER_INDEX 32` in `asm_utils_fixed.S` and use that constant.
+
+*   **Code Organization:** The main `.ino` file contains all the C++ logic.
+    *   **Recommendation:** For a project of this size, it's manageable. However, for further expansion, consider moving utility functions (e.g., `printHex8`, `readInputLine`, address validators) into a separate `.cpp`/`.h` file pair to improve modularity.
+
+### Summary
+
+The `arduino-monitor-improved` project is a robust and well-written low-level tool. It has clearly been hardened against many common bugs and includes important safety features. The main area for future improvement would be to refactor the blocking input handling to make the monitor more responsive. Overall, it's a solid utility for anyone doing bare-metal development on an Arduino.

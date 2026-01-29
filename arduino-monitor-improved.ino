@@ -1,3 +1,5 @@
+#include "src/asm_defs.h"
+
 /**
  * Arduino UNO Monitor - IMPROVED VERSION
  * Low-level register and memory inspector.
@@ -9,6 +11,7 @@
  * - Improved performance with buffered output
  * - Better error handling
  * - Added bounds checking
+ * - Non-blocking input with timeout
  */
 
 extern "C" {
@@ -28,6 +31,10 @@ uint8_t reg_file[64];
 #define FLASH_END     0x7FFF  // 32KB Flash
 #define IO_START      0x0020
 #define IO_END        0x00FF
+
+// --- Constants for non-blocking input ---
+#define INPUT_TIMEOUT_MS 15000  // 15 seconds
+#define INPUT_TIMEOUT_SENTINEL 0xFFFF
 
 // --- Utility Functions ---
 void printHex8(uint8_t val) {
@@ -56,9 +63,11 @@ bool isIOAddress(uint16_t addr) {
   return (addr >= IO_START && addr < SRAM_START);
 }
 
-uint16_t readInputLine(char *buffer, uint8_t maxLen, bool isHex) {
+uint16_t readInputLine(char *buffer, uint8_t maxLen, bool isHex, uint32_t timeout_ms) {
   uint8_t pos = 0;
-  while (true) {
+  uint32_t startTime = millis();
+  
+  while (millis() - startTime < timeout_ms) {
     if (Serial.available()) {
       char c = Serial.read();
       if (c == '\n' || c == '\r') {
@@ -67,6 +76,8 @@ uint16_t readInputLine(char *buffer, uint8_t maxLen, bool isHex) {
           Serial.println();
           return (uint16_t)strtol(buffer, NULL, isHex ? 16 : 10);
         }
+        // Reset start time on empty input to avoid immediate timeout
+        startTime = millis(); 
         continue;
       } else if (c == 0x08 || c == 0x7F) { // Backspace or Del
         if (pos > 0) {
@@ -80,18 +91,23 @@ uint16_t readInputLine(char *buffer, uint8_t maxLen, bool isHex) {
           Serial.print(c);
         }
       }
+      // Reset start time on any valid keypress
+      startTime = millis();
     }
   }
+
+  Serial.println(F("\nERROR: Input timeout."));
+  return INPUT_TIMEOUT_SENTINEL;
 }
 
 uint16_t readHexInput() {
   char buf[10];
-  return readInputLine(buf, sizeof(buf), true);
+  return readInputLine(buf, sizeof(buf), true, INPUT_TIMEOUT_MS);
 }
 
 uint16_t readDecInput() {
   char buf[10];
-  return readInputLine(buf, sizeof(buf), false);
+  return readInputLine(buf, sizeof(buf), false, INPUT_TIMEOUT_MS);
 }
 
 void displayMenu() {
@@ -121,15 +137,22 @@ void setup() {
 void loop() {
   displayMenu();
 
-  // Wait for a valid command key
+  // Wait for a valid command key (with timeout)
   char choice = 0;
-  while (true) {
+  uint32_t menuStartTime = millis();
+  while (millis() - menuStartTime < INPUT_TIMEOUT_MS) {
     if (Serial.available()) {
       choice = Serial.read();
-      if (choice >= '1' && choice <= '7')
-        break;
+      if (choice >= '1' && choice <= '7') {
+        goto choice_made;
+      }
     }
   }
+  // If loop finishes, it's a timeout
+  Serial.println(F("\nTimeout waiting for command. Refreshing menu..."));
+  return;
+
+choice_made:
   Serial.println(choice);
 
   switch (choice) {
@@ -148,24 +171,24 @@ void loop() {
         Serial.print(F("\t"));
     }
     Serial.print(F("SREG: "));
-    printHex8(reg_file[32]);
+    printHex8(reg_file[SREG_BUFFER_INDEX]);
     Serial.print(F(" ["));
     // Decode SREG bits
-    if (reg_file[32] & 0x80) Serial.print('I');
+    if (reg_file[SREG_BUFFER_INDEX] & 0x80) Serial.print('I');
     else Serial.print('-');
-    if (reg_file[32] & 0x40) Serial.print('T');
+    if (reg_file[SREG_BUFFER_INDEX] & 0x40) Serial.print('T');
     else Serial.print('-');
-    if (reg_file[32] & 0x20) Serial.print('H');
+    if (reg_file[SREG_BUFFER_INDEX] & 0x20) Serial.print('H');
     else Serial.print('-');
-    if (reg_file[32] & 0x10) Serial.print('S');
+    if (reg_file[SREG_BUFFER_INDEX] & 0x10) Serial.print('S');
     else Serial.print('-');
-    if (reg_file[32] & 0x08) Serial.print('V');
+    if (reg_file[SREG_BUFFER_INDEX] & 0x08) Serial.print('V');
     else Serial.print('-');
-    if (reg_file[32] & 0x04) Serial.print('N');
+    if (reg_file[SREG_BUFFER_INDEX] & 0x04) Serial.print('N');
     else Serial.print('-');
-    if (reg_file[32] & 0x02) Serial.print('Z');
+    if (reg_file[SREG_BUFFER_INDEX] & 0x02) Serial.print('Z');
     else Serial.print('-');
-    if (reg_file[32] & 0x01) Serial.print('C');
+    if (reg_file[SREG_BUFFER_INDEX] & 0x01) Serial.print('C');
     else Serial.print('-');
     Serial.println(']');
     break;
@@ -174,12 +197,16 @@ void loop() {
   case '2': {
     Serial.print(F("Reg index (0-31): "));
     uint16_t idx = readDecInput();
+    if (idx == INPUT_TIMEOUT_SENTINEL) break;
     if (idx > 31) {
       Serial.println(F("ERROR: Invalid index (must be 0-31)"));
       break;
     }
     Serial.print(F("New Value (Hex): "));
-    uint8_t val = (uint8_t)readHexInput();
+    uint16_t val_read = readHexInput();
+    if (val_read == INPUT_TIMEOUT_SENTINEL) break;
+    uint8_t val = (uint8_t)val_read;
+    
     reg_file[idx] = val;
     Serial.print(F("Updated r"));
     Serial.print(idx);
@@ -192,6 +219,7 @@ void loop() {
   case '3': {
     Serial.print(F("Address (Hex): "));
     uint16_t addr = readHexInput();
+    if (addr == INPUT_TIMEOUT_SENTINEL) break;
     
     if (!isValidSRAMAddress(addr)) {
       Serial.print(F("WARNING: Address 0x"));
@@ -212,8 +240,8 @@ void loop() {
     
     Serial.print(F("Length (Dec): "));
     uint16_t len = readDecInput();
-    
-    // Check for overflow
+    if (len == INPUT_TIMEOUT_SENTINEL) break;
+
     if ((uint32_t)addr + len > 0xFFFF) {
       Serial.println(F("ERROR: Length would overflow address space!"));
       break;
@@ -230,7 +258,6 @@ void loop() {
       printHex8(ptr[i]);
       Serial.print(F(" "));
       
-      // Yield to avoid watchdog timeout on long dumps
       if (i % 64 == 63) {
         delay(1);
       }
@@ -242,7 +269,8 @@ void loop() {
   case '4': {
     Serial.print(F("Address (Hex): "));
     uint16_t addr = readHexInput();
-    
+    if (addr == INPUT_TIMEOUT_SENTINEL) break;
+
     if (!isValidSRAMAddress(addr)) {
       Serial.print(F("ERROR: Address 0x"));
       printHex16(addr);
@@ -264,7 +292,9 @@ void loop() {
     }
     
     Serial.print(F("Value (Hex): "));
-    uint8_t val = (uint8_t)readHexInput();
+    uint16_t val_read = readHexInput();
+    if (val_read == INPUT_TIMEOUT_SENTINEL) break;
+    uint8_t val = (uint8_t)val_read;
 
     Serial.print(F("Writing 0x"));
     printHex8(val);
@@ -274,7 +304,6 @@ void loop() {
 
     *(volatile uint8_t *)addr = val;
 
-    // Immediate readback verification
     uint8_t readback = *(volatile uint8_t *)addr;
     if (readback == val) {
       Serial.println(F("Verified."));
@@ -289,8 +318,8 @@ void loop() {
   case '5': {
     Serial.print(F("Flash WORD Address (Hex): "));
     uint16_t word_addr = readHexInput();
-    
-    // Validate flash address (word address * 2 = byte address)
+    if (word_addr == INPUT_TIMEOUT_SENTINEL) break;
+
     if ((uint32_t)word_addr * 2 > FLASH_END) {
       Serial.println(F("ERROR: Address beyond Flash memory!"));
       break;
@@ -310,10 +339,9 @@ void loop() {
     }
     
     Serial.println(F("Restoring registers and jumping..."));
-    Serial.flush();  // Ensure message is sent
+    Serial.flush();
     delay(100);
     
-    // Use restore_and_call to properly return
     restore_and_call(word_addr, reg_file);
     
     Serial.println(F("Returned from call."));
@@ -323,6 +351,7 @@ void loop() {
   case '6': {
     Serial.print(F("Flash Byte Address (Hex): "));
     uint16_t addr = readHexInput();
+    if (addr == INPUT_TIMEOUT_SENTINEL) break;
     
     if (!isValidFlashAddress(addr)) {
       Serial.println(F("ERROR: Address beyond Flash memory!"));
@@ -331,6 +360,7 @@ void loop() {
     
     Serial.print(F("Length (Dec): "));
     uint16_t len = readDecInput();
+    if (len == INPUT_TIMEOUT_SENTINEL) break;
     
     if ((uint32_t)addr + len > FLASH_END + 1) {
       Serial.println(F("ERROR: Length exceeds Flash memory!"));
@@ -356,7 +386,6 @@ void loop() {
       printHex8(val);
       Serial.print(F(" "));
       
-      // Yield periodically
       if (i % 64 == 63) {
         delay(1);
       }
@@ -397,13 +426,11 @@ void loop() {
     printHex16((uint16_t)setup >> 1);
     Serial.println(F(")"));
     
-    // Show stack pointer
     uint16_t sp = SP;
     Serial.print(F("Current Stack Pointer:        0x"));
     printHex16(sp);
     Serial.println();
     
-    // Show free memory
     extern int __heap_start, *__brkval;
     int v;
     int free_mem = (int)&v - (__brkval == 0 ? (int)&__heap_start : (int)__brkval);
@@ -414,7 +441,6 @@ void loop() {
   }
   }
 
-  // Clear any remaining characters before next loop
   while (Serial.available())
     Serial.read();
 }

@@ -2,6 +2,8 @@
 
 .section .text
 
+.set SREG_BUFFER_INDEX, 32
+
 /**
  * void capture_registers(uint8_t *buffer)
  * r24:r25 = buffer
@@ -54,7 +56,7 @@ capture_registers:
     std Z+31, r31
     
     in r0, _SFR_IO_ADDR(SREG)
-    std Z+32, r0
+    std Z+SREG_BUFFER_INDEX, r0
 
     eor r1, r1           ; Restore zero register
     ret
@@ -124,7 +126,7 @@ restore_and_execute:
     push r30             ; Save Z low
     push r31             ; Save Z high
     movw r30, r22        ; Z = buffer address again
-    ldd r0, Z+32         ; Get SREG
+    ldd r0, Z+SREG_BUFFER_INDEX         ; Get SREG
     out _SFR_IO_ADDR(SREG), r0
     ldd r30, Z+30        ; Restore Z from buffer
     ldd r31, Z+31
@@ -187,7 +189,7 @@ restore_and_call:
     ; Restore SREG
     movw r24, r22        ; Get buffer address back
     movw r30, r24        ; Z = buffer
-    ldd r0, Z+32
+    ldd r0, Z+SREG_BUFFER_INDEX
     out _SFR_IO_ADDR(SREG), r0
     
     ; Restore Z from buffer
